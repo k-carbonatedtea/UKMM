@@ -186,8 +186,11 @@ fn render_deploy_config(config: &mut DeployConfig, platform: Platform, ui: &mut 
         render_setting(
             "Deploy Method",
             "There are three methods of deployment: copying, hard linking, and symlinking. \
-             Generally copying is slow and should be avoided if possible. For more on this, \
-             consult the docs.",
+             Copying is slow and should only be used to deploy for consoles. \
+             Hard links are faster and the most well-supported by Windows. \
+             Symlinks are the fastest, but may fail to deploy automatically on Windows. \
+             Always use Copy for consoles. Probably use Symlinks for emulators. \
+             For more on this, consult the docs.",
             ui,
             |ui| {
                 changed |= ui
@@ -212,6 +215,33 @@ fn render_deploy_config(config: &mut DeployConfig, platform: Platform, ui: &mut 
                     )
                     .changed();
             },
+        );
+        render_setting(
+            "Deploy Layout",
+            "There are two methods of deployment layout: without a folder named for UKMM, \
+             and with a folder named for UKMM. If you select With Name, UKMM will add a \
+             BreathOfTheWild_UKMM folder to the end of your Output Folder path, where appropriate. \
+             If you don't know what to choose for this: On WiiU, choose With Name. On Switch consoles or \
+             when your output folder is an atmosphere folder, choose Without Name. On Switch emulators \
+             where your output folder is NOT an atmosphere folder, choose With Name. For more on this, \
+             consult the docs.",
+            ui,
+            |ui| {
+                changed |= ui
+                    .radio_value(
+                        &mut config.layout,
+                        uk_manager::settings::DeployLayout::WithoutName,
+                        "Without Name",
+                    )
+                    .changed();
+                changed |= ui
+                    .radio_value(
+                        &mut config.layout,
+                        uk_manager::settings::DeployLayout::WithName,
+                        "With Name",
+                    )
+                    .changed();
+            }
         );
         render_setting(
             "Auto Deploy",

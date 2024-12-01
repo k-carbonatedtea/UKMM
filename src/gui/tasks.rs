@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Result};
+use anyhow_ext::{Context, Result};
 use fs_err as fs;
 use join_str::jstr;
 use serde::Deserialize;
@@ -34,6 +34,15 @@ mod handlers;
 pub use handlers::register_handlers;
 
 fn is_probably_a_mod_and_has_meta(path: &Path) -> (bool, bool) {
+    if path
+        .file_name()
+        .unwrap_or_default()
+        .to_str()
+        .unwrap_or_default()
+        == "rules.txt"
+    {
+        return (true, true);
+    }
     let ext = path
         .extension()
         .and_then(|e| e.to_str().map(|e| e.to_lowercase()))
@@ -42,14 +51,6 @@ fn is_probably_a_mod_and_has_meta(path: &Path) -> (bool, bool) {
         (false, false)
     } else if ext == "7z" {
         (true, false)
-    } else if path
-        .file_name()
-        .unwrap_or_default()
-        .to_str()
-        .unwrap_or_default()
-        == "rules.txt"
-    {
-        (true, true)
     } else {
         match fs::File::open(path)
             .context("")
@@ -85,7 +86,10 @@ pub fn open_mod(core: &Manager, path: &Path, meta: Option<Meta>) -> Result<Messa
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase() == "bnp")
-        .unwrap_or(false)
+        .unwrap_or(false) ||
+       path
+        .join("info.json")
+        .exists()
     {
         let mod_ = convert_bnp(core, path).context("Failed to convert BNP to UKMM mod")?;
         return Ok(Message::HandleMod(Mod::from_reader(
@@ -104,7 +108,7 @@ pub fn open_mod(core: &Manager, path: &Path, meta: Option<Meta>) -> Result<Messa
             .filter(|(is_mod, _has_meta)| *is_mod)
             .map(|(_, has_meta)| has_meta)
             {
-                log::info!("Maybe it's not a UKMM mod, let's to convert it");
+                log::info!("Maybe it's not a UKMM mod, let's try to convert it");
                 if !has_meta && meta.is_none() {
                     log::info!("Mod has no meta info, requesting manual input");
                     return Ok(Message::RequestMeta(path.to_path_buf()));
@@ -337,39 +341,93 @@ pub fn import_cemu_settings(core: &Manager, path: &Path) -> Result<Message> {
                 .join("Cemu/mlc01");
             path.exists().then_some(path)
         });
-    let (base, update, dlc) = mlc_path
-        .as_ref()
-        .map(|mlc_path| {
-            let title_path = mlc_path.join("usr/title");
-            static REGIONS: &[&str] = &[
-                "101C9400", "101c9400", "101C9500", "101c9500", "101C9300", "101c9300",
-            ];
-            let base_folder = REGIONS.iter().find_map(|r| {
-                let path = title_path.join(jstr!("00050000/{r}/content"));
-                path.exists().then_some(path)
+    static REGIONS: &[&str] = &[
+        "101C9400", "101c9400", "101C9500", "101c9500", "101C9300", "101c9300",
+    ];
+    let (base, update, dlc, wua) = if let Ok(title_list_cache) = settings_path.parent()
+        .expect("Lost settings path")
+        .join("title_list_cache.xml")
+        .exists_then()
+        .ok_or("Cemu title cache does not exist, set up Cemu first and try again") {
+        let title_list = fs::read_to_string(&title_list_cache).context("Failed to open Cemu title cache file")?;
+        let title_tree = roxmltree::Document::parse(&title_list)
+            .context("Failed to parse Cemu title cache file: invalid XML")?;
+        let mut base_folder: Option<PathBuf> = None;
+        let mut update_folder: Option<PathBuf> = None;
+        let mut dlc_folder: Option<PathBuf> = None;
+        let mut wua_file: Option<PathBuf> = None;
+        title_tree.descendants()
+            .filter_map(|n| {
+                if n.tag_name().name() != "title" {
+                    None
+                } else {
+                    let title_id = n.attribute("titleId").expect("invalid title");
+                    if !REGIONS.contains(&&title_id[8..]) {
+                        None
+                    } else {
+                        let format = n.descendants()
+                            .find(|c| c.tag_name().name() == "format")
+                            .expect("invalid title")
+                            .text()
+                            .expect("invalid format")
+                            .parse::<u32>()
+                            .expect("invalid format");
+                        if let Ok(path) = PathBuf::from(n.descendants()
+                            .find(|c| c.tag_name().name() == "path")
+                            .expect("invalid title")
+                            .text()
+                            .expect("invalid path"))
+                            .canonicalize() {
+                            Some((&title_id[..8], format, path))
+                        } else {
+                            None
+                        }
+                    }
+                }
+            }).for_each(|(dump_type, format, path)| {
+                match (dump_type, format) {
+                    ("00050000", 1) => base_folder = Some(path.join("content")),
+                    ("0005000c", 1) => dlc_folder = Some(path.join("content").join("0010")),
+                    ("0005000e", 1) => update_folder = Some(path.join("content")),
+                    ("00050000", 3) => wua_file = Some(path),
+                    _ => {},
+                }
             });
-            let update_folder = REGIONS.iter().find_map(|r| {
-                let path = title_path.join(jstr!("0005000E/{r}/content"));
-                path.exists().then_some(path)
-            });
-            let dlc_folder = REGIONS.iter().find_map(|r| {
-                let path = title_path.join(jstr!("0005000C/{r}/content/0010"));
-                path.exists().then_some(path)
-            });
-            (base_folder, update_folder, dlc_folder)
-        })
-        .ok_or_else(|| anyhow::anyhow!("Could not find game dump from Cemu settings"))?;
+        (base_folder, update_folder, dlc_folder, wua_file)
+    } else {
+        mlc_path
+            .as_ref()
+            .map(|mlc_path| {
+                let title_path = mlc_path.join("usr/title");
+                let base_folder = REGIONS.iter().find_map(|r| {
+                    let path = title_path.join(jstr!("00050000/{r}/content"));
+                    path.exists().then_some(path)
+                });
+                let update_folder = REGIONS.iter().find_map(|r| {
+                    let path = title_path.join(jstr!("0005000e/{r}/content"));
+                    path.exists().then_some(path)
+                });
+                let dlc_folder = REGIONS.iter().find_map(|r| {
+                    let path = title_path.join(jstr!("0005000c/{r}/content/0010"));
+                    path.exists().then_some(path)
+                });
+                (base_folder, update_folder, dlc_folder, None)
+            })
+            .expect("Could not find unpacked game dump from Cemu settings.")
+    };
     let gfx_folder = if let Some(path) = path.with_file_name("graphicPacks").exists_then() {
         path
     } else if let Some(path) = dirs2::config_dir()
         .expect("YIKES")
-        .join("Cemu/graphicPacks")
+        .join("Cemu")
+        .join("graphicPacks")
         .exists_then()
     {
         path
     } else if let Some(path) = dirs2::data_local_dir()
         .expect("YIKES")
-        .join("Cemu/graphicPacks")
+        .join("Cemu")
+        .join("graphicPacks")
         .exists_then()
     {
         path
@@ -381,21 +439,23 @@ pub fn import_cemu_settings(core: &Manager, path: &Path) -> Result<Message> {
     };
     let mut settings = core.settings_mut();
     settings.current_mode = Platform::WiiU;
-    let dump = Arc::new(
-        ResourceReader::from_unpacked_dirs(base, update, dlc)
-            .context("Failed to validate game dump")?,
-    );
+    let dump = if wua.is_some() {
+        Arc::new(ResourceReader::from_zarchive(unsafe { wua.unwrap_unchecked() })
+            .context("Failed to validate game dump")?)
+    } else {
+        Arc::new(ResourceReader::from_unpacked_dirs(base, update, dlc)
+            .context("Failed to validate game dump")?)
+    };
     if let Some(wiiu_config) = settings.wiiu_config.as_mut() {
-        if mlc_path.is_some() {
-            wiiu_config.dump = dump;
-        }
+        wiiu_config.dump = dump;
         let deploy_config = wiiu_config.deploy_config.get_or_insert_default();
         deploy_config.auto = true;
-        deploy_config.output = gfx_folder.join("BreathOfTheWild_UKMM");
-        deploy_config.executable = gfx_folder
-            .with_file_name("Cemu.exe")
+        deploy_config.output = gfx_folder.clone();
+        deploy_config.executable = path
+            .join("Cemu.exe")
             .exists_then()
             .map(|p| p.display().to_string());
+        deploy_config.layout = uk_manager::settings::DeployLayout::WithName;
     } else {
         settings.wiiu_config = Some(PlatformSettings {
             language: uk_content::constants::Language::USen,
@@ -404,12 +464,13 @@ pub fn import_cemu_settings(core: &Manager, path: &Path) -> Result<Message> {
             deploy_config: Some(DeployConfig {
                 auto: true,
                 method: uk_manager::settings::DeployMethod::Symlink,
-                output: gfx_folder.join("BreathOfTheWild_UKMM"),
+                output: gfx_folder.clone(),
                 cemu_rules: true,
-                executable: gfx_folder
-                    .with_file_name("Cemu.exe")
+                executable: path
+                    .join("Cemu.exe")
                     .exists_then()
                     .map(|p| p.display().to_string()),
+                layout: uk_manager::settings::DeployLayout::WithName,
             }),
         })
     };

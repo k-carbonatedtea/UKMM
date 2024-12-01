@@ -185,15 +185,15 @@ impl App {
                 }
                 Message::DeleteProfile(profile) => {
                     self.do_task(move |core| {
-                        let path = core.settings().profiles_dir().join(profile);
+                        let path = core.settings().profiles_dir().join(profile.as_str());
                         fs::remove_dir_all(path)?;
-                        Ok(Message::ReloadProfiles)
+                        Ok(Message::CleanProfile(profile))
                     })
                 }
                 Message::DuplicateProfile(profile) => {
                     self.do_task(move |core| {
                         let profiles_dir = core.settings().profiles_dir();
-                        dircpy::copy_dir(
+                        uk_manager::util::copy_dir(
                             profiles_dir.join(&profile),
                             profiles_dir.join(profile + "_copy"),
                         )?;
@@ -206,6 +206,23 @@ impl App {
                         fs::rename(profiles_dir.join(&profile), profiles_dir.join(rename))?;
                         Ok(Message::ReloadProfiles)
                     })
+                }
+                Message::CleanProfile(profile) => {
+                    let mut state = self.profiles_state.borrow_mut();
+                    let mods = state
+                        .profiles
+                        .get(profile.as_str())
+                        .unwrap()
+                        .mods()
+                        .iter()
+                        .map(|(h, m)| (*h, m.path.clone()))
+                        .collect::<HashMap<_,_>>();
+                    state.reload(&self.core);
+                    let assigned = state.all_assigned_mod_hashes();
+                    mods.iter()
+                        .filter(|(h, _)| !assigned.contains(h))
+                        .for_each(|(_, p)| fs::remove_file(p).unwrap_or_default());
+                    self.busy.set(false);
                 }
                 Message::ReloadProfiles => {
                     self.profiles_state.borrow_mut().reload(&self.core);
@@ -230,10 +247,10 @@ impl App {
                 Message::SelectFile => {
                     if let Some(mut paths) = rfd::FileDialog::new()
                         .set_title("Select a Mod")
-                        .add_filter("Any mod (*.zip, *.7z, *.bnp)", &["zip", "bnp", "7z"])
+                        .add_filter("Any mod (*.zip, *.7z, *.bnp, rules.txt)", &["zip", "bnp", "7z", "txt"])
                         .add_filter("UKMM Mod (*.zip)", &["zip"])
                         .add_filter("BCML Mod (*.bnp)", &["bnp"])
-                        .add_filter("Legacy Mod (*.zip, *.7z)", &["zip", "7z"])
+                        .add_filter("Legacy Mod (*.zip, *.7z, rules.txt)", &["zip", "7z", "txt"])
                         .add_filter("All files (*.*)", &["*"])
                         .pick_files()
                         .filter(|p| !p.is_empty())
@@ -446,6 +463,23 @@ impl App {
                     settings::CONFIG.write().clear();
                 }
                 Message::SaveSettings => {
+                    let mut needs_reset = false;
+                    self.core.settings().platform_config().map(|old_plat| {
+                        old_plat.deploy_config.as_ref().map(|old_dep| {
+                            if let Some(new_plat) = &self.temp_settings.platform_config() {
+                                new_plat.deploy_config.as_ref().map(|new_dep| {
+                                    if old_dep.layout != new_dep.layout ||
+                                        old_dep.method != new_dep.method ||
+                                        old_dep.output != new_dep.output {
+                                        if let Ok(_) = self.core.settings()
+                                            .wipe_output(self.core.settings().current_mode.into()) {
+                                            needs_reset = true;
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                    });
                     let save_res = self.temp_settings.save().and_then(|_| {
                         self.core.reload()?;
                         Ok(())
@@ -463,6 +497,9 @@ impl App {
                             self.package_builder.borrow_mut().reset(self.platform());
                             self.do_update(Message::ClearSelect);
                             self.do_update(Message::ResetMods(None));
+                            if needs_reset {
+                                self.do_update(Message::ResetPending);
+                            }
                         }
                         Err(e) => self.do_update(Message::Error(e)),
                     };

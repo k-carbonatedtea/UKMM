@@ -8,7 +8,6 @@ version.workspace = true
 anyhow = { workspace = true }
 anyhow_ext = { workspace = true }
 dashmap = { workspace = true, features = ["rayon"] }
-dircpy = { workspace = true }
 dirs2 = { workspace = true }
 fs-err = { workspace = true }
 join_str = { workspace = true }
@@ -19,7 +18,7 @@ parking_lot = { workspace = true, features = ["serde"] }
 path-slash = { workspace = true }
 rayon = { workspace = true }
 roead = { workspace = true, features = ["yaml"] }
-rstb = { workspace = true, features = ["botw-data"] }
+rstb = { workspace = true }
 rustc-hash = { workspace = true }
 sanitise-file-name = { workspace = true }
 serde = { workspace = true }
