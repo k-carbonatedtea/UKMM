@@ -73,8 +73,8 @@ version 3 or later. The source is publicly available on
 
 ## Special Thanks
 
-@leoetlino: oead, many other BotW libraries  
-@anna-is-cute: original BotW MSBT libraries  
+[Léo Lam](https://github.com/leoetlino): oead, many other BotW libraries  
+[Anna](https://github.com/anna-is-cute): original BotW MSBT libraries  
 Gray: Dutch localization  
 Nebroc: French localization  
 Waikuteru: German localization  
