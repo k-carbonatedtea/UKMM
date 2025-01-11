@@ -87,10 +87,18 @@ pub fn load_fonts(context: &egui::Context) {
         "NotoSCBold".to_owned(),
         egui::FontData::from_static(include_bytes!("../../../fonts/NotoSansSC-Bold.ttf"))
     );
+    fonts.font_data.insert(
+        "NotoZH".to_owned(),
+        egui::FontData::from_static(include_bytes!("../../../fonts/ZHcn.ttf"))
+    );
+    fonts.font_data.insert(
+        "NotoZHBold".to_owned(),
+        egui::FontData::from_static(include_bytes!("../../../fonts/ZHcn-Bold.ttf"))
+    );
     if let Some(family) = fonts
         .families
         .get_mut(&egui::FontFamily::Proportional) {
-        ["NotoSC", "NotoKR", "NotoJP", "Noto", "System"].iter().for_each(|s| {
+        ["NotoSC", "NotoKR", "NotoJP", "NotoZH","Noto", "System",].iter().for_each(|s| {
             family.insert(0, s.to_string());
         });
     }
@@ -101,6 +109,7 @@ pub fn load_fonts(context: &egui::Context) {
             vec![
                 "Bold".to_owned(),
                 "NotoBold".to_owned(),
+                "NotoZHBold".to_owned(),
                 "NotoJPBold".to_owned(),
                 "NotoKRBold".to_owned(),
                 "NotoSCBold".to_owned(),

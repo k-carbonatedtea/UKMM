@@ -58,7 +58,7 @@ impl From<LocLang> for &str {
             LocLang::Japanese => "日本語",
             LocLang::Korean => "한국어 [韓國語]",
             LocLang::Russian => "Русский язык",
-            LocLang::SimpleChinese => "中文",
+            LocLang::SimpleChinese => "简体中文",
             LocLang::Spanish => "Español",
         }
     }
